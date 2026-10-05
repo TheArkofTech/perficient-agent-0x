@@ -21,7 +21,8 @@ filing HTML → cheerio text (strip tags, collapse whitespace) → heading regex
 | 10-Q | `Item 2. MD&A` (+ financial-statements region if heading misses) | 12,000 |
 | 8-K | entire body (naturally short) | 6,000 |
 
-- Heading regex must tolerate case shifts, `&nbsp;`, inline-XBRL artifacts (`ITEM&#160;1A`).
+- Heading regex must tolerate case shifts, `&nbsp;`, inline-XBRL artifacts (`ITEM&#160;1A`), and encoded punctuation (`&#8217;` apostrophes) — **decode HTML entities before matching** (verified: raw-text searches fail on Apple's `Management’s Discussion`).
+- **False-positive filters (verified on AAPL & NVDA 10-Ks):** reject table-of-contents clusters (heading immediately followed by other Items / page numbers) and in-text cross-references (preceded by “Refer to …” / “read in conjunction with …” — `Item 1A` appears 8× in NVDA before the real body header at index 78,742); require body-style continuation text.
 - **Fallback (format drift):** if a heading regex misses, sample **first + last 8,000 chars** of the document text — degraded context, never a dead end.
 - Input HTML stream-capped at **3 MB** per document before parsing.
 

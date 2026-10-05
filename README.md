@@ -15,7 +15,7 @@ Ticker → EDGAR (10-K/10-Q/8-K) + live quote → section extraction → Claude 
 ```
 
 1. **Resolve** the ticker to its SEC CIK and **fetch in parallel**: current quote (Yahoo market data) and the filing index (SEC EDGAR).
-2. **Retrieve** up to three primary filing documents straight from `docs.sec.gov`.
+2. **Retrieve** up to three primary filing documents straight from `www.sec.gov/Archives`.
 3. **Extract** — strip HTML and slice to the sections that matter (Business, Risk Factors, MD&A) instead of dumping whole filings into the model.
 4. **Synthesize** one grounded LLM call that returns structured JSON — numbers never pass through the model; every claim links back to its SEC source document.
 

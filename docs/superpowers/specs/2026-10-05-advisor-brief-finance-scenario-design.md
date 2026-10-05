@@ -47,7 +47,7 @@ A wealth advisor meeting a client about a public stock needs, in under 60 second
 │  2. fan-out (Promise.allSettled):                                          │
 │     ├─ quote  Yahoo v8 chart JSON   (price, change, 52wk, volume)          │
 │     └─ filings EDGAR submissions → locate latest 10-K, 10-Q, 8-K           │
-│  3. retrieve  download primary docs from docs.sec.gov/Archives (≤3)        │
+│  3. retrieve  download primary docs from www.sec.gov/Archives (≤3)        │
 │  4. extract   HTML → text → section-slice (Item 1/1A/7 from 10-K;          │
 │               MD&A + key financials from 10-Q; 8-K body)  ~60K chars cap   │
 │  5. synthesize ONE Portkey chat-completion call (claude-sonnet-4.5),       │
@@ -122,8 +122,9 @@ No datasets are provided; all sources below were **verified live on 2026-10-05**
 ### 2.1 Market quote — Yahoo Finance chart endpoint (primary)
 
 - **Endpoint:** `GET https://query1.finance.yahoo.com/v8/finance/chart/{TICKER}?interval=1d&range=1y`
-- **Verified:** keyless, returns `meta.regularMarketPrice` (333.69), `regularMarketChangePercent`, `fiftyTwoWeekHigh/Low`, `previousClose`, `regularMarketVolume`, exchange name, plus 1y daily series (free sparkline data).
-- **Must:** send a browser-like `User-Agent` header.
+- **Verified:** keyless, returns `meta.regularMarketPrice` (333.69), `regularMarketChangePercent`, `fiftyTwoWeekHigh/Low`, `regularMarketVolume`, exchange name, plus 1y daily series (free sparkline data).
+- **Quirk (verified):** in `range=1y` responses `meta.previousClose` is `null` (`chartPreviousClose` = price one year ago) — derive previous close from `close[len-2]` of the daily series, else compute `price / (1 + changePct/100)`.
+- **Must:** send a **modern browser `User-Agent` + `Accept` header** — Yahoo's ATS edge answers `429 "Edge: Too Many Requests"` to bare/curl-style agents (verified: `curl/8.7.1` → 429; Chrome/124 UA → 200 on both query1 and query2).
 - **Server-side only** — no CORS concern since the Vercel function fetches it.
 - **Fallbacks (in order):**
   1. `query2.finance.yahoo.com` mirror host.
@@ -140,7 +141,7 @@ All EDGAR calls **must** send `User-Agent: <App> <contact-email>` (SEC fair-acce
 |---|---|---|
 | 1 | Ticker → CIK | `GET https://www.sec.gov/files/company_tickers.json` — e.g. `{"cik_str":320193,"ticker":"AAPL","title":"Apple Inc."}`. Cache 24 h (changes ~never intraday). |
 | 2 | Filing index | `GET https://data.sec.gov/submissions/CIK{10-digit-padded}.json` — `filings.recent.{form,filingDate,accessionNumber,primaryDocument}` arrays. Verified: returns Apple's filings incl. recent forms. |
-| 3 | Primary doc | `GET https://docs.sec.gov/Archives/edgar/data/{cik}/{accessionNoNoDashes}/{primaryDocument}` — the actual 10-K/10-Q/8-K HTML. |
+| 3 | Primary doc | `GET https://www.sec.gov/Archives/edgar/data/{cikUnpadded}/{accessionNoNoDashes}/{primaryDocument}` — the actual 10-K/10-Q/8-K HTML. **Not `docs.sec.gov` — that host does not resolve (verified 2026-10-05); path CIK is unpadded (`320193`), padded form 301-redirects.** Verified: Apple 10-K, 1.52 MB HTML. |
 | 4 | (Optional) structured facts | `GET https://data.sec.gov/api/xbrl/companyfacts/CIK{...}.json` — XBRL revenue/net-income series for a "key figures" table without any parsing. Use only if time permits. |
 | 5 | (Not used in v1) full-text search | `GET https://efts.sec.gov/LATEST/search-index?q=...&forms=10-K&ciks=...` — verified working, but the submissions index already gives us the right filings deterministically. Reserve for an "ask about a topic across filings" stretch feature. |
 
@@ -155,7 +156,7 @@ All EDGAR calls **must** send `User-Agent: <App> <contact-email>` (SEC fair-acce
 - Ticker not in `company_tickers.json` → 404 with "Unknown ticker" message (suggest NYSE/NASDAQ listed only).
 - Foreign issuer (no 10-K/10-Q) → fall back to latest **20-F/6-K**; if none, filings section shows "No US periodic filings on record" and the brief is quote-only.
 - Multi-ticker share classes (GOOGL/GOOG) → match exact ticker string; CIK is shared, which is fine.
-- Very large 10-K HTML (>4 MB) → stream-cap at 3 MB before cheerio parse.
+- Very large 10-K HTML (measured 1.5–2 MB) → stream-cap at 3 MB before cheerio parse.
 
 ### 2.3 Data freshness & honesty controls
 
@@ -184,7 +185,7 @@ Download ≤ 3 primary documents concurrently (fetch with 10 s `AbortSignal.time
 Naive "dump the whole 10-K into the model" is the trap; this is the pragmatic design:
 
 1. `cheerio` → strip tags, collapse whitespace → plain text (10-K text ≈ 150–400 K chars).
-2. **Section slicer** (regex on Item headings, case/nbsp tolerant):
+2. **Section slicer** (regex on Item headings, case/nbsp tolerant). **Must exclude false positives (verified on AAPL & NVDA 10-Ks):** table-of-contents clusters (heading followed immediately by other Items / page numbers) and in-text cross-references (preceded by “Refer to …” / “read in conjunction with …”); decode HTML entities (`&#8217;` apostrophes, `&#160;` nbsp) before matching — raw-text searches miss them. True narrative header is picked by requiring body-style continuation text.
    - 10-K: `Item 1. Business` (cap 12 K chars), `Item 1A. Risk Factors` (cap 12 K), `Item 7. MD&A` (cap 15 K), `Item 7A. Market Risk` (cap 5 K).
    - 10-Q: `Item 2. MD&A` (cap 12 K) + first-page financial statements region if slice misses.
    - 8-K: whole body (naturally short, cap 6 K).
@@ -326,6 +327,11 @@ Chat/multi-turn Q&A · authentication/user accounts · more than 3 filings per t
 | `query1.finance.yahoo.com/v8/finance/chart/AAPL` | 200; price 333.69, 52wk 243.42–345.34, volume, 1y series |
 | Stooq CSV | dead (HTML error page) — rejected |
 | FMP `apikey=demo` | rejected — keys required; not on critical path |
+| *Re-verified 2026-10-05 (after teamwork-agent survey contradicted draft):* |
+| `docs.sec.gov` DNS | **does not resolve** (curl exit 6) — host corrected to `www.sec.gov` in §1.2/§2.2 |
+| `www.sec.gov/Archives/edgar/data/320193/…/aapl-20250927.htm` | 200, 1,520,319 bytes; padded CIK → 301 to unpadded |
+| Yahoo bare UA vs Chrome/124 UA | 429 vs 200 — browser UA + Accept required (§2.1) |
+| Section-slice false positives | AAPL TOC matches `Item 1. Business` at idx 19,354 before body at 22,903; NVDA `Item 1A` ×8 (TOC + cross-refs) — filter rules added to §3 step 4 |
 
 ## Appendix B — Environment variables
 

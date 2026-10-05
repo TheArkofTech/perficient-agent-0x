@@ -10,15 +10,18 @@ No datasets are provided for this challenge — every source is public and fetch
 
 ```
 GET https://query1.finance.yahoo.com/v8/finance/chart/{TICKER}?interval=1d&range=1y
-User-Agent: Mozilla/5.0            # browser-like UA required
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) … Chrome/124.0.0.0 Safari/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
 ```
+
+> **429 trap (verified):** Yahoo's ATS edge rejects bare/curl-style agents with `429 "Edge: Too Many Requests"`; a modern desktop Chrome UA + Accept header returns 200 on both `query1` and `query2`.
 
 **What we use from the response** (verified for AAPL: price 333.69, 52-wk 243.42–345.34):
 
 | Field | UI use |
 |---|---|
 | `chart.result[0].meta.regularMarketPrice` | headline price |
-| `.regularMarketChangePercent` / `.previousClose` | day change, colored |
+| `.regularMarketChangePercent` + derived prev close | day change, colored — **`meta.previousClose` is `null` for `range=1y`** (verified); derive from `close[len-2]` of the series or `price / (1 + changePct/100)` |
 | `.fiftyTwoWeekHigh` / `.fiftyTwoWeekLow` | 52-week range bar |
 | `.regularMarketVolume` | volume stat |
 | `.regularMarketTime` | "as of HH:MM:SS AM ET" freshness label |
@@ -60,9 +63,9 @@ Verified for Apple (CIK 0000320193): recent forms returned, arrays are index-ali
 ### 2.3 Primary document download
 
 ```
-GET https://docs.sec.gov/Archives/edgar/data/{cik}/{accessionNo without dashes}/{primaryDocument}
+GET https://www.sec.gov/Archives/edgar/data/{cikUnpadded}/{accessionNoNoDashes}/{primaryDocument}
 ```
-Raw filing HTML. Stream-capped at 3 MB before parsing.
+Raw filing HTML (verified: Apple 10-K = 1.52 MB). **Host is `www.sec.gov` — `docs.sec.gov` does not resolve (verified, DNS failure).** Path CIK is the unpadded integer (`320193`); the padded form returns a 301 to the unpadded URL. Stream-capped at 3 MB before parsing.
 
 ### 2.4 (Optional, if time permits) XBRL structured facts
 
@@ -102,6 +105,7 @@ OpenAI-compatible. The model string is passed verbatim from the challenge brief;
 | GOOGL vs GOOG share classes | exact ticker match for CIK; shared filings are correct behavior |
 | 10-K HTML > 3 MB | stream cap + head-tail section sampling |
 | Heading regex misses (format drift) | first + last 8 K chars sampling fallback — degrades, never fails |
+| TOC / cross-reference false positives | `Item 1A` appears 8× in NVDA's 10-K (TOC + "Refer to…" mentions); slicer rejects TOC clusters and cross-refs, decodes `&#8217;`/`&#160;` entities, and requires body-style continuation (verified against AAPL & NVDA) |
 | SEC 403 (missing/bad UA) | prevented by `SEC_USER_AGENT` env var on every fetch |
 
 ## Evidence log (2026-10-05)
@@ -112,6 +116,9 @@ OpenAI-compatible. The model string is passed verbatim from the challenge brief;
 | `submissions/CIK0000320193.json` | 200; `filings.recent` arrays aligned (form/date/accession/primaryDocument) |
 | `efts.sec.gov/LATEST/search-index?...` | 200; ES-format hits (kept for stretch) |
 | `query1.finance.yahoo.com/v8/finance/chart/AAPL` | 200; price 333.69, 52wk 243.42–345.34, volume, 1y series |
+| `docs.sec.gov` DNS | **does not resolve** — corrected to `www.sec.gov/Archives/…` (unpadded CIK; padded → 301) |
+| `www.sec.gov/Archives/edgar/data/320193/…/aapl-20250927.htm` | 200; 1,520,319 bytes of 10-K HTML |
+| Yahoo UA experiment | `curl/8.7.1` → 429; Chrome/124 UA + Accept → 200 (query1 & query2) |
 | `stooq.com/q/l/` CSV | dead (HTML error page) — rejected |
 | `financialmodelingprep.com` `apikey=demo` | rejected — real key required; not on critical path |
 | Portkey gateway | pending — scheduled as build Block 0 (key issued at interview start) |

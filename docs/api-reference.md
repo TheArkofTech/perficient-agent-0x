@@ -45,7 +45,7 @@ interface FilingRef {
   form: '10-K' | '10-Q' | '8-K' | '20-F' | '6-K'
   filingDate: string                     // YYYY-MM-DD
   accessionNumber: string                // e.g. "0000320193-25-000079"
-  sourceUrl: string                      // deep link to docs.sec.gov archive
+  sourceUrl: string                      // deep link to the filing at www.sec.gov/Archives
   sectionsUsed: string[]                 // e.g. ["Item 1A", "Item 7"] — audit trail
 }
 
@@ -97,10 +97,10 @@ Design rule: pipeline uses `Promise.allSettled` — no single upstream failure e
   },
   "filings": [
     { "form": "10-K", "filingDate": "2025-10-31", "accessionNumber": "0000320193-25-000079",
-      "sourceUrl": "https://docs.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm",
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm",
       "sectionsUsed": ["Item 1", "Item 1A", "Item 7", "Item 7A"] },
     { "form": "10-Q", "filingDate": "2026-08-01", "accessionNumber": "0000320193-26-000042",
-      "sourceUrl": "https://docs.sec.gov/Archives/edgar/data/320193/…", "sectionsUsed": ["Item 2"] }
+      "sourceUrl": "https://www.sec.gov/Archives/edgar/data/320193/…", "sectionsUsed": ["Item 2"] }
   ],
   "brief": { "plainEnglishSummary": "…", "keyRiskFactors": ["…"], "advisorTalkingPoints": ["…"] },
   "steps": [

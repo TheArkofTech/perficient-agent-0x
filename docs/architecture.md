@@ -16,7 +16,7 @@
 │  2. fan-out (Promise.allSettled):                                          │
 │     ├─ quote  Yahoo v8 chart JSON   (price, change, 52wk, volume)          │
 │     └─ filings EDGAR submissions → locate latest 10-K, 10-Q, 8-K           │
-│  3. retrieve  download primary docs from docs.sec.gov/Archives (≤3)        │
+│  3. retrieve  download primary docs from www.sec.gov/Archives (≤3)        │
 │  4. extract   HTML → text → section-slice (Item 1/1A/7 from 10-K;          │
 │               MD&A from 10-Q; 8-K body)  ~60K chars cap                    │
 │  5. synthesize ONE Portkey chat-completion call (claude-sonnet-4.5),       │
