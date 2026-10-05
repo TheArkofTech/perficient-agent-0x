@@ -65,6 +65,16 @@ interface YahooChartResponse {
  * - ISO string marketTime
  * - Graceful structured error handling for invalid or delisted tickers without throwing exceptions.
  */
+const COMMON_QUOTE_ALIASES: Record<string, string> = {
+  FORD: 'F',
+  GOOGLE: 'GOOGL',
+  ALPHABET: 'GOOGL',
+  BERKSHIRE: 'BRK-B',
+  FACEBOOK: 'META',
+  DISNEY: 'DIS',
+  BOEING: 'BA',
+};
+
 export async function getMarketQuote(ticker: string): Promise<QuoteResult> {
   const cleanTicker = (ticker || '').trim().toUpperCase();
   if (!cleanTicker || cleanTicker.length > 15) {
@@ -75,8 +85,11 @@ export async function getMarketQuote(ticker: string): Promise<QuoteResult> {
     };
   }
 
+  // Check common alias (e.g. FORD -> F)
+  const resolvedTicker = COMMON_QUOTE_ALIASES[cleanTicker] || cleanTicker;
+
   // Yahoo Finance uses hyphens instead of dots for share classes (e.g. BRK-B, BF-B)
-  const queryTicker = cleanTicker.replace(/\./g, '-');
+  const queryTicker = resolvedTicker.replace(/\./g, '-');
   let lastError = `Failed to fetch quote for ${cleanTicker}`;
   let lastStatusCode: number | undefined;
 

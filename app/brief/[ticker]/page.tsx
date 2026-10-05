@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { getMarketQuote } from "@/lib/quote";
-import { getCompanyFilings } from "@/lib/sec";
+import { getCompanyFilings, resolveTickerOrCompany } from "@/lib/sec";
 import { generateAdvisorBrief } from "@/lib/llm";
 
 export const dynamic = "force-dynamic";
@@ -12,26 +11,79 @@ interface PageProps {
 
 export default async function BriefDetailPage({ params }: PageProps) {
   const { ticker } = await params;
-  const cleanTicker = ticker.trim().toUpperCase();
+  const rawInput = decodeURIComponent(ticker || "").trim();
 
-  // Concurrently fetch quote and filings
+  // 1. Resolve ticker or company name (e.g. "FORD" -> "F", "google" -> "GOOGL")
+  const resolved = await resolveTickerOrCompany(rawInput);
+  const targetTicker = (resolved?.ticker || rawInput).toUpperCase();
+  const matchedAlias = resolved && resolved.ticker !== rawInput.toUpperCase() ? rawInput.toUpperCase() : null;
+
+  // 2. Fetch fresh live quote (always up to the second) and SEC filings
   const [quoteResult, secResult] = await Promise.allSettled([
-    getMarketQuote(cleanTicker),
-    getCompanyFilings(cleanTicker),
+    getMarketQuote(targetTicker),
+    getCompanyFilings(targetTicker),
   ]);
 
   const quote = quoteResult.status === "fulfilled" && quoteResult.value.success ? quoteResult.value.data : undefined;
   const filings = secResult.status === "fulfilled" && secResult.value.success ? secResult.value.data : undefined;
 
+  // If completely unknown, render a clean search-recovery screen rather than a raw 404
   if (!quote && !filings) {
-    notFound();
+    return (
+      <main className="min-h-screen bg-neutral-950 text-neutral-100 flex flex-col items-center justify-center px-4 py-16">
+        <div className="w-full max-w-lg space-y-6 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-400">
+            Ticker Not Found
+          </div>
+          <h1 className="text-3xl font-extrabold text-white tracking-tight">
+            No filings or quotes for &ldquo;{rawInput}&rdquo;
+          </h1>
+          <p className="text-sm text-neutral-400">
+            We could not resolve an SEC-registered US company or live market quote matching &ldquo;{rawInput}&rdquo;.
+          </p>
+
+          <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-4 text-xs text-neutral-400 space-y-2 text-left">
+            <span className="font-semibold text-neutral-300">Quick Tips:</span>
+            <ul className="list-disc list-inside space-y-1 text-neutral-400">
+              <li>Ford Motor Co trades under ticker <span className="font-mono text-emerald-400 font-bold">$F</span></li>
+              <li>Boeing trades under ticker <span className="font-mono text-emerald-400 font-bold">$BA</span></li>
+              <li>Walt Disney trades under ticker <span className="font-mono text-emerald-400 font-bold">$DIS</span></li>
+              <li>Berkshire Hathaway trades under <span className="font-mono text-emerald-400 font-bold">$BRK.B</span></li>
+            </ul>
+          </div>
+
+          <form action="/brief" method="GET" className="flex gap-2">
+            <input
+              type="text"
+              name="ticker"
+              placeholder="Search by ticker (e.g. F, NVDA, AAPL)..."
+              required
+              className="flex-1 rounded-xl border border-neutral-700 bg-neutral-900 px-4 py-2.5 text-sm text-white placeholder-neutral-500 uppercase font-mono"
+            />
+            <button
+              type="submit"
+              className="rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-neutral-950 hover:bg-emerald-400 transition"
+            >
+              Search
+            </button>
+          </form>
+
+          <div className="pt-2">
+            <Link href="/" className="text-xs text-neutral-500 hover:text-neutral-300 transition">
+              ← Return to Advisor Brief Home
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
   }
 
-  const { brief, isAiGenerated, generatedAt } = await generateAdvisorBrief(cleanTicker, quote, filings);
-  const companyName = filings?.companyName || quote?.ticker || cleanTicker;
+  // 3. Generate or retrieve remembered brief (cached) and update with the live quote!
+  const { brief, isAiGenerated, generatedAt } = await generateAdvisorBrief(targetTicker, quote, filings);
+  const companyName = filings?.companyName || resolved?.title || quote?.ticker || targetTicker;
   const isPositive = quote ? quote.regularMarketChangePercent >= 0 : false;
 
-  // Build SVG sparkline path
+  // Build SVG sparkline path from daily close points
   const sparklinePoints = quote?.sparkline || [];
   let svgPath = "";
   if (sparklinePoints.length > 1) {
@@ -80,12 +132,22 @@ export default async function BriefDetailPage({ params }: PageProps) {
           </div>
 
           <div className="flex items-center gap-2 text-xs text-neutral-500 font-mono">
-            <span>Generated: {new Date(generatedAt).toLocaleTimeString()}</span>
+            <span>Brief Generated: {new Date(generatedAt).toLocaleTimeString()}</span>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 space-y-6">
+        {/* Alias resolution alert banner if searched by name */}
+        {matchedAlias && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-xs font-mono text-emerald-300 flex items-center justify-between">
+            <span>
+              ℹ️ Searched &ldquo;{matchedAlias}&rdquo; → Auto-resolved to NYSE/NASDAQ ticker <strong className="text-white">${targetTicker}</strong> ({companyName})
+            </span>
+            <span className="text-emerald-400 font-semibold">Active</span>
+          </div>
+        )}
+
         {/* Header Block */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-neutral-800/80 pb-6">
           <div>
@@ -94,7 +156,7 @@ export default async function BriefDetailPage({ params }: PageProps) {
                 {companyName}
               </h1>
               <span className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1 font-mono text-base font-bold text-emerald-400">
-                ${cleanTicker}
+                ${targetTicker}
               </span>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-neutral-400 font-mono">
@@ -128,11 +190,13 @@ export default async function BriefDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Market Quote Panel */}
+        {/* Market Quote Panel (Fresh Live Price) */}
         {quote && (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 rounded-2xl border border-neutral-800 bg-neutral-900/40 p-6 shadow-xl backdrop-blur">
             <div className="space-y-1">
-              <div className="text-xs font-medium uppercase tracking-wider text-neutral-500">Regular Market Price</div>
+              <div className="text-xs font-medium uppercase tracking-wider text-neutral-500">
+                Live Market Price (Updated Now)
+              </div>
               <div className="flex items-baseline gap-3">
                 <span className="text-4xl font-extrabold font-mono text-white">
                   ${quote.regularMarketPrice.toFixed(2)}
@@ -185,7 +249,7 @@ export default async function BriefDetailPage({ params }: PageProps) {
         <section className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-6 sm:p-7 shadow-lg">
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            60-Second Executive Synthesis
+            60-Second Executive Synthesis (Remembered Brief + Live Stock Price)
           </div>
           <p className="text-base sm:text-lg leading-relaxed text-neutral-200">
             {brief.plainEnglishSummary}
@@ -277,10 +341,10 @@ export default async function BriefDetailPage({ params }: PageProps) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
             <div className="rounded border border-neutral-800/80 bg-neutral-900/40 p-2.5">
               <div className="text-emerald-400 font-semibold">✓ CIK Resolved</div>
-              <div className="text-neutral-500 text-[10px] mt-0.5">{filings?.cik || "N/A"}</div>
+              <div className="text-neutral-500 text-[10px] mt-0.5">{filings?.cik || resolved?.cik || "N/A"}</div>
             </div>
             <div className="rounded border border-neutral-800/80 bg-neutral-900/40 p-2.5">
-              <div className="text-emerald-400 font-semibold">✓ Market Quote</div>
+              <div className="text-emerald-400 font-semibold">✓ Live Quote</div>
               <div className="text-neutral-500 text-[10px] mt-0.5">${quote?.regularMarketPrice.toFixed(2) || "N/A"}</div>
             </div>
             <div className="rounded border border-neutral-800/80 bg-neutral-900/40 p-2.5">

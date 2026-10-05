@@ -163,6 +163,74 @@ export async function resolveCik(ticker: string): Promise<ResolvedCik | null> {
   );
 }
 
+const COMMON_ALIASES: Record<string, string> = {
+  FORD: 'F',
+  GOOGLE: 'GOOGL',
+  ALPHABET: 'GOOGL',
+  MICROSOFT: 'MSFT',
+  APPLE: 'AAPL',
+  NVIDIA: 'NVDA',
+  TESLA: 'TSLA',
+  AMAZON: 'AMZN',
+  META: 'META',
+  FACEBOOK: 'META',
+  BERKSHIRE: 'BRK-B',
+  DISNEY: 'DIS',
+  BOEING: 'BA',
+  COCACOLA: 'KO',
+  COKE: 'KO',
+  PEPSI: 'PEP',
+  NETFLIX: 'NFLX',
+  JPMORGAN: 'JPM',
+  CHASE: 'JPM',
+  EXXON: 'XOM',
+  CHEVRON: 'CVX',
+  INTEL: 'INTC',
+  AMD: 'AMD',
+  TSMC: 'TSM',
+  WALMART: 'WMT',
+};
+
+/**
+ * Resolves a ticker symbol OR company name to a verified SEC CIK.
+ * Allows searching by company name ("FORD", "google", "disney") and maps to standard ticker.
+ */
+export async function resolveTickerOrCompany(input: string): Promise<ResolvedCik | null> {
+  if (!input || typeof input !== 'string') return null;
+  const clean = input.trim().toUpperCase().replace(/[^A-Z0-9.-]/g, '');
+  if (!clean) return null;
+
+  // 1. Direct ticker resolution
+  const direct = await resolveCik(clean);
+  if (direct) return direct;
+
+  // 2. Common company alias lookup
+  const alias = COMMON_ALIASES[clean];
+  if (alias) {
+    const resolvedAlias = await resolveCik(alias);
+    if (resolvedAlias) return resolvedAlias;
+  }
+
+  // 3. Match against SEC company titles
+  if (cachedTickersMap) {
+    const cleanLower = clean.toLowerCase();
+    for (const info of cachedTickersMap.values()) {
+      const titleLower = info.title.toLowerCase();
+      if (titleLower === cleanLower || titleLower.startsWith(cleanLower + ' ')) {
+        return makeResolvedCik(info.cik, info.unpaddedCik, info.ticker, info.title);
+      }
+    }
+    for (const info of cachedTickersMap.values()) {
+      const titleLower = info.title.toLowerCase();
+      if (titleLower.includes(cleanLower)) {
+        return makeResolvedCik(info.cik, info.unpaddedCik, info.ticker, info.title);
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * Retrieves the list of target filings (latest 10-K, latest 10-Q, and latest 8-K within 60 days)
  * from SEC submissions endpoint.
@@ -788,7 +856,7 @@ export async function getCompanyFilings(ticker: string): Promise<SecResult> {
   }
 
   try {
-    const cikInfo = await resolveCik(cleanTicker);
+    const cikInfo = (await resolveCik(cleanTicker)) || (await resolveTickerOrCompany(cleanTicker));
     if (!cikInfo) {
       return {
         success: false,

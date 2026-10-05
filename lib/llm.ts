@@ -28,11 +28,28 @@ const DEFAULT_PORTKEY_MODEL = "@aws-bedrock-use2/us.anthropic.claude-sonnet-4-5-
  * If Portkey credentials are configured, calls Claude Sonnet 4.5.
  * Otherwise, generates an accurate extractive brief directly from the filing text.
  */
+import { getCachedBrief, setCachedBrief } from "@/lib/cache";
+
 export async function generateAdvisorBrief(
   ticker: string,
   quote?: QuoteData,
   filings?: SecFilingsResult
 ): Promise<AdvisorBriefResult> {
+  const cleanKey = ticker.trim().toUpperCase();
+
+  // Check if we have a remembered brief in the cache
+  const cached = getCachedBrief(cleanKey);
+  if (cached) {
+    return {
+      ticker: cleanKey,
+      quote, // Always use the latest live stock quote!
+      filings: filings || cached.filings,
+      brief: cached.brief,
+      isAiGenerated: cached.isAiGenerated,
+      generatedAt: cached.generatedAt,
+    };
+  }
+
   const apiKey = process.env.PORTKEY_API_KEY;
   const baseUrl = process.env.PORTKEY_BASE_URL || DEFAULT_PORTKEY_BASE_URL;
   const model = process.env.PORTKEY_MODEL || DEFAULT_PORTKEY_MODEL;
@@ -50,11 +67,16 @@ export async function generateAdvisorBrief(
   }
 
   if (!brief) {
-    brief = generateExtractiveFallbackBrief(ticker, quote, filings);
+    brief = generateExtractiveFallbackBrief(cleanKey, quote, filings);
+  }
+
+  // Remember this generated brief for subsequent requests
+  if (filings) {
+    setCachedBrief(cleanKey, brief, filings, isAiGenerated);
   }
 
   return {
-    ticker,
+    ticker: cleanKey,
     quote,
     filings,
     brief,
